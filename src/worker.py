@@ -514,6 +514,16 @@ async def handle_dependabot_pr(payload: dict, token: str) -> None:
         )
         return
 
+    head_repo_full = (((pr.get("head") or {}).get("repo") or {}).get("full_name") or "")
+    base_repo_full = (((pr.get("base") or {}).get("repo") or {}).get("full_name") or "")
+    if head_repo_full and base_repo_full and head_repo_full != base_repo_full:
+        console.log(
+            f"[BLT] Skip auto-approval: fork-based PR "
+            f"repo={owner}/{repo} pr=#{pr_number} actor={actor or '-'} author={pr_author} "
+            f"head_repo={head_repo_full} base_repo={base_repo_full}"
+        )
+        return
+
     if not _is_dependabot_dependency_update(pr):
         console.log(
             f"[BLT] Skip auto-approval: not a dependency update "
