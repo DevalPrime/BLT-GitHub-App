@@ -468,20 +468,27 @@ def _is_dependabot(user_login: str) -> bool:
 
 
 def _is_dependabot_dependency_update(pr: dict) -> bool:
-    """Return True when the PR looks like a Dependabot dependency bump."""
+    """Return True when the PR looks like a Dependabot dependency update."""
     title = (pr.get("title") or "").strip().lower()
     head_ref = ((pr.get("head") or {}).get("ref") or "").strip().lower()
+    body = (pr.get("body") or "").strip().lower()
+
+    # Dependabot branch refs are the strongest signal and ecosystem-agnostic.
+    if head_ref.startswith("dependabot/"):
+        return True
 
     # Common Dependabot dependency update title forms.
     title_looks_like_bump = (
         (title.startswith("bump ") and " from " in title and " to " in title)
         or title.startswith("build(deps)")
+        or title.startswith("chore(deps)")
+        or " deps: bump " in title
     )
 
-    # Dependabot branch refs typically look like dependabot/<ecosystem>/<package>.
-    ref_looks_like_dependabot = head_ref.startswith("dependabot/")
+    # Optional body signal frequently present in Dependabot PRs.
+    body_looks_like_dependabot = "dependabot will resolve this pr once" in body
 
-    return title_looks_like_bump or ref_looks_like_dependabot
+    return title_looks_like_bump or body_looks_like_dependabot
 
 
 async def handle_dependabot_pr(payload: dict, token: str) -> None:
