@@ -456,6 +456,48 @@ async def handle_pull_request_closed(payload: dict, token: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Dependabot auto-approval
+# ---------------------------------------------------------------------------
+
+
+def _is_dependabot(user_login: str) -> bool:
+    """Check if a user is Dependabot."""
+    if not user_login:
+        return False
+    return user_login.lower() in ("dependabot[bot]", "dependabot-preview[bot]", "dependabot")
+
+
+async def handle_dependabot_pr(payload: dict, token: str) -> None:
+    """Auto-approve pull requests opened by Dependabot."""
+    pr = payload["pull_request"]
+    pr_author = pr["user"]["login"]
+    
+    if not _is_dependabot(pr_author):
+        return
+    
+    owner = payload["repository"]["owner"]["login"]
+    repo = payload["repository"]["name"]
+    pr_number = pr["number"]
+    
+    # Approve the PR using GitHub Reviews API
+    resp = await github_api(
+        "POST",
+        f"/repos/{owner}/{repo}/pulls/{pr_number}/reviews",
+        token,
+        {
+            "event": "APPROVE",
+            "body": "🤖 Auto-approved: Dependabot dependency update."
+        }
+    )
+    
+    if resp.status in (200, 201):
+        console.log(f"[BLT] Auto-approved Dependabot PR #{pr_number} in {owner}/{repo}")
+    else:
+        error_text = await resp.text() if resp.status >= 400 else ""
+        console.error(f"[BLT] Failed to auto-approve Dependabot PR #{pr_number}: {resp.status} {error_text}")
+
+
+# ---------------------------------------------------------------------------
 # Webhook dispatcher
 # ---------------------------------------------------------------------------
 
@@ -502,6 +544,7 @@ async def handle_webhook(request, env) -> Response:
         elif event == "pull_request":
             if action == "opened":
                 await handle_pull_request_opened(payload, token)
+                await handle_dependabot_pr(payload, token)
             elif action == "closed":
                 await handle_pull_request_closed(payload, token)
     except Exception as exc:
