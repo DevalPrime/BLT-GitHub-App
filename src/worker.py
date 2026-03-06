@@ -467,18 +467,54 @@ def _is_dependabot(user_login: str) -> bool:
     return user_login.lower() in ("dependabot[bot]", "dependabot-preview[bot]", "dependabot")
 
 
+def _is_dependabot_dependency_update(pr: dict) -> bool:
+    """Return True when the PR looks like a Dependabot dependency bump."""
+    title = (pr.get("title") or "").strip().lower()
+    head_ref = ((pr.get("head") or {}).get("ref") or "").strip().lower()
+
+    # Common Dependabot dependency update title forms.
+    title_looks_like_bump = (
+        (title.startswith("bump ") and " from " in title and " to " in title)
+        or title.startswith("build(deps)")
+    )
+
+    # Dependabot branch refs typically look like dependabot/<ecosystem>/<package>.
+    ref_looks_like_dependabot = head_ref.startswith("dependabot/")
+
+    return title_looks_like_bump or ref_looks_like_dependabot
+
+
 async def handle_dependabot_pr(payload: dict, token: str) -> None:
     """Auto-approve pull requests opened by Dependabot."""
     pr = payload["pull_request"]
     pr_author = pr["user"]["login"]
-    
-    if not _is_dependabot(pr_author):
-        return
-    
     owner = payload["repository"]["owner"]["login"]
     repo = payload["repository"]["name"]
     pr_number = pr["number"]
-    
+    actor = ((payload.get("sender") or {}).get("login") or "")
+
+    if not _is_dependabot(pr_author):
+        console.log(
+            f"[BLT] Skip auto-approval: non-Dependabot author "
+            f"repo={owner}/{repo} pr=#{pr_number} actor={actor or '-'} author={pr_author}"
+        )
+        return
+
+    if pr.get("draft"):
+        console.log(
+            f"[BLT] Skip auto-approval: draft PR "
+            f"repo={owner}/{repo} pr=#{pr_number} actor={actor or '-'} author={pr_author}"
+        )
+        return
+
+    if not _is_dependabot_dependency_update(pr):
+        console.log(
+            f"[BLT] Skip auto-approval: not a dependency update "
+            f"repo={owner}/{repo} pr=#{pr_number} actor={actor or '-'} author={pr_author} "
+            f"title={pr.get('title') or '-'}"
+        )
+        return
+
     # Approve the PR using GitHub Reviews API
     resp = await github_api(
         "POST",
@@ -489,12 +525,19 @@ async def handle_dependabot_pr(payload: dict, token: str) -> None:
             "body": "🤖 Auto-approved: Dependabot dependency update."
         }
     )
-    
+
     if resp.status in (200, 201):
-        console.log(f"[BLT] Auto-approved Dependabot PR #{pr_number} in {owner}/{repo}")
+        console.log(
+            f"[BLT] Auto-approved Dependabot PR "
+            f"repo={owner}/{repo} pr=#{pr_number} actor={actor or '-'} author={pr_author}"
+        )
     else:
         error_text = await resp.text() if resp.status >= 400 else ""
-        console.error(f"[BLT] Failed to auto-approve Dependabot PR #{pr_number}: {resp.status} {error_text}")
+        console.error(
+            f"[BLT] Auto-approval failed "
+            f"repo={owner}/{repo} pr=#{pr_number} actor={actor or '-'} author={pr_author} "
+            f"status={resp.status} error={error_text}"
+        )
 
 
 # ---------------------------------------------------------------------------
